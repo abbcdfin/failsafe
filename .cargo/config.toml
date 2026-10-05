@@ -1,0 +1,6 @@
+# Every musl target is linked fully static with the linker bundled in the Rust
+# toolchain, so a new architecture needs no C cross-toolchain or sysroot.
+# crt-static is explicit because some musl targets (riscv64gc) default to dynamic.
+# The target list is in the Makefile.
+[target.'cfg(target_env = "musl")']
+rustflags = ["-C", "linker=rust-lld", "-C", "target-feature=+crt-static"]
