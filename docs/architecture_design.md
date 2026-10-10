@@ -46,12 +46,17 @@ is encoded. `Broken` covers "could not be run at all" (not executable, spawn err
 
 ## Detector execution
 
-- **Discovery.** Every regular file in the detectors directory is a detector, named by its
-  file name, run in name order. Scanned once at startup; restart to pick up changes.
+- **Discovery.** Every entry in the detectors directory that is a regular file, or a
+  symlink, is a detector, named by its file name, run in name order. Symlinks are
+  followed; one that does not resolve to a regular file is a `Broken` detector, never
+  silently skipped. Subdirectories are ignored. Scanned once at startup; restart to pick
+  up changes.
 - **Spawn.** stdin `/dev/null`, cwd `/`, own process group (`CommandExt::process_group(0)`),
   stdout/stderr inherited so output reaches the journal.
 - **Timeout.** Poll `try_wait` until the deadline, then `SIGKILL` the whole process group
   (`libc::kill(-pid, SIGKILL)`), so children of a shell-script detector do not linger.
+- **Idle.** Between runs the loop sleeps until the next detector is due (later bounded by
+  the watchdog ping interval); it does not poll.
 - **Sequential.** One detector at a time. The watchdog is pinged between detectors, so the
   systemd `WatchdogSec` only has to exceed the largest single timeout, not their sum.
 
@@ -166,6 +171,13 @@ failsafe (`WatchdogSec`), failsafe watches the system.
 Lines on stderr with sd-daemon priority prefixes (`<3>` error, `<4>` warning, `<6>` info).
 journald interprets them; no logging crate.
 
+The journal must show what failsafe is watching and how close it is to acting:
+
+- at startup: the detectors directory and each detector found; a warning if there are none
+- every unhealthy run, with the count against the threshold; the return to healthy
+- every broken detector, as an error
+- every action requested, and whether it was executed, dry-run or refused by the guard
+
 ## Dependencies
 
 `serde` + `toml` (configuration and state file), `libc` (process-group kill, `reboot`,
@@ -220,6 +232,18 @@ against uptime, not reboots per wall-clock window, keeps it correct without an R
 Detectors are few and cheap; concurrency would add shared state to a program whose value
 is being predictable. The cost is that one slow detector delays the others by at most its
 timeout. Revisit if detector count or timeouts make a full round exceed the shortest interval.
+
+### Configuration from file only, no environment variables (2026-10-06)
+
+Reboot policy comes from the configuration file only, with no environment variables.
+
+- One source means no precedence rules; the file on disk is the single source of truth.
+- Environment variables are invisible, inherited across processes (systemd drop-ins, wrapper
+  scripts, shells), and a silent change to a reboot threshold must be avoided.
+- The file can be validated and reviewed; an invalid value stops the daemon at startup.
+
+Outside the file remain CLI flags (`--config PATH`, `--dry-run`, `--once`) and `NOTIFY_SOCKET`
+which carries no policy and is required by systemd's watchdog protocol.
 
 ## Unknown about the first board
 

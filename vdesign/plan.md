@@ -10,7 +10,7 @@ Each phase ends with something runnable end to end; later phases widen it.
 - [x] **Phase 0: scaffold and multi-architecture static build.** `make` produces
   `dist/failsafe-<target>` for aarch64 and x86_64.
 
-- [ ] **Phase 1: walking skeleton, dry-run only.** Discover detectors in a directory, run
+- [x] **Phase 1: walking skeleton, dry-run only.** Discover detectors in a directory, run
   them on one fixed interval with a timeout, count consecutive failures, log "would
   reboot" when a detector trips. Full detector contract (0 / 77 / other / timeout /
   broken). `--once` for testing a detector. Policy values are the built-in defaults; the
