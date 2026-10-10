@@ -10,19 +10,17 @@ Each phase ends with something runnable end to end; later phases widen it.
 - [x] **Phase 0: scaffold and multi-architecture static build.** `make` produces
   `dist/failsafe-<target>` for aarch64 and x86_64.
 
-- [x] **Phase 1: walking skeleton, dry-run only.** Discover detectors in a directory, run
-  them on one fixed interval with a timeout, count consecutive failures, log "would
-  reboot" when a detector trips. Full detector contract (0 / 77 / other / timeout /
-  broken). `--once` for testing a detector. Policy values are the built-in defaults; the
-  only inputs are `--detectors-dir`, `--dry-run`, `--once`.
-  *Done when:* the integration tests pass on the host, and running without `--dry-run`
-  exits with "reboot is not implemented" instead of pretending.
+- [x] **Phase 1: walking skeleton, dry-run only.** Detectors are discovered (symlinks
+  followed), run under a timeout in their own process group, counted, and a trip logs
+  "would reboot". `--once` tests a detector. 19 tests. Architect review R1–R6 closed.
+  Left over: `--detectors-dir` and the `--test-*` flags are temporary until Phase 3.
 
 - [ ] **Phase 2: real reboot behind the loop guard.** Persisted streak, boot grace,
   backoff, stable reset, reason logged at next startup, reboot with forced fallback. The
   guard and the reboot ship together: no build may contain one without the other.
   *Done when:* guard unit tests pass, and on a board a permanently failing detector
   produces reboots at the uptimes the backoff formula predicts.
+  Backoff (not a hard cap) confirmed by the user 2026-10-10. Board in `active_plan.md`.
 
 - [ ] **Phase 3: configuration.** TOML file, per-detector policy and intervals, startup
   validation, root-ownership check on detectors.

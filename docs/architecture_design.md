@@ -62,22 +62,28 @@ is encoded. `Broken` covers "could not be run at all" (not executable, spawn err
 
 ## Counting and deciding (`monitor`)
 
-Per detector, one number: `consecutive_failures`.
+Per detector, a counter `consecutive_failures` and a flag `failing`.
 
-| Outcome | Effect |
-|---|---|
-| `Healthy` | counter = 0 |
-| `Unhealthy` | counter += 1 |
-| `Unknown` | unchanged |
-| `Broken` | unchanged, logged as error |
+| Outcome | Counter | `failing` |
+|---|---|---|
+| `Healthy` | = 0 | false |
+| `Unhealthy` | += 1 | true |
+| `Unknown` | unchanged | unchanged |
+| `Broken` | unchanged, logged as error | unchanged |
 
 When the counter reaches `threshold` the detector is *tripped* and `monitor` requests its
 action. After the action is attempted (executed, dry-run, or refused by the guard) the
 counter resets to 0, so a persisting failure re-trips after another `threshold` runs
 instead of every run.
 
-The system is *stable* when every detector's counter has been 0 continuously for
-`stable_after`.
+The counter decides when to act; the flag records whether the detector's last verdict was
+unhealthy. They differ after a trip: the counter is back at 0 while the detector is still
+`failing`. Only a `Healthy` run clears the flag, and that transition is what is logged as
+"returned to healthy".
+
+The system is *stable* when no detector has been `failing` continuously for
+`stable_after`. Stability is defined on the flag, not the counter, so a refused or dry-run
+action (which zeroes the counter) can never make a sick system look stable.
 
 ## Reboot-loop guard
 
@@ -99,8 +105,11 @@ period. With the defaults a detector that never recovers produces reboots at 5 m
 15, 25, 45, 85 min of uptime, doubling until one reboot per 24 h.
 
 - **Before rebooting:** `streak += 1`, record the reason, write the state file (temp file,
-  `fsync`, rename, `fsync` the directory).
+  `fsync`, rename, `fsync` the directory). If the write fails, the reboot does not happen.
 - **On becoming stable:** `streak = 0`, reason cleared.
+- **Write only on change.** The state file is written before a reboot and when a non-zero
+  streak is cleared, never periodically; the storage is flash.
+- **Arithmetic saturates.** `required_uptime` must not overflow for any `streak`.
 - **At startup:** if a reason is present, log it as a warning ("previous reboot was
   initiated by failsafe: detector X, cause, streak N").
 - **State file missing:** `streak = 0` (first boot).
@@ -112,12 +121,21 @@ period. With the defaults a detector that never recovers produces reboots at 5 m
 ## Reboot execution (`action`)
 
 1. `sync()`.
-2. `systemctl reboot`.
-3. Keep pinging the watchdog. If the system is still up after `reboot_deadline`, call
-   `libc::reboot(RB_AUTOBOOT)`, which does not depend on userspace.
+2. `systemctl reboot`. If it cannot be spawned, go straight to step 3.
+3. Keep pinging the watchdog. If the system is still up after `reboot_deadline`, `sync()`
+   again and call `libc::reboot(RB_AUTOBOOT)`, which does not depend on userspace. If that
+   fails too, log an error and return to monitoring.
 
-In dry-run mode `action` logs what it would have done and `guard` leaves the state file
-untouched.
+The steps that touch the machine sit behind one trait (`Rebooter`), so the sequence
+around them (guard verdict, state write, deadline) is tested with a fake.
+
+In dry-run mode the guard is still consulted, read-only: the log says what real mode would
+have done ("would reboot" or "would be refused: N s of backoff remaining"), and the state
+file is left untouched.
+
+Real mode requires root: started without `--dry-run` and with a non-zero effective uid,
+failsafe exits at startup. It could not reboot anyway, and the check keeps a developer
+machine from ever being a reboot target by accident.
 
 ## Configuration
 
@@ -190,7 +208,8 @@ The journal must show what failsafe is watching and how close it is to acting:
 - **Integration (`tests/`):** a temp directory of shell-script detectors run through the
   real binary with `--dry-run` / `--once`: healthy, unhealthy, exit 77, timeout with a
   lingering child, non-executable file.
-- **Never in tests:** a real reboot. Reboot execution is verified on a board.
+- **Never in tests:** a real reboot. No test may start the binary without `--dry-run`
+  except to assert that it exits at startup. Reboot execution is verified on a board.
 - All tests run on the host with `make test`; no root, no network.
 
 ## Decisions
@@ -220,7 +239,7 @@ The tool will be deployed to more than one architecture; the first board is aarc
 **Constraint that follows: dependencies must be pure Rust.** A crate that compiles C
 needs a C cross-compiler per architecture and breaks the one-rule build.
 
-### Backoff instead of a reboot cap (2026-10-05)
+### Backoff instead of a reboot cap (proposed 2026-10-05, confirmed by the user 2026-10-10)
 
 A hard cap ("N reboots, then stop") leaves an unattended device permanently unprotected
 after a transient fault. Exponential backoff with a ceiling gives both properties with

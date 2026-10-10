@@ -44,5 +44,4 @@ entry: run interval, timeout, consecutive-failure threshold, escalation list.
 
 Proposed by the architect, not yet confirmed by the user:
 
-- Exit code 77 for "cannot tell".
-- Backoff with a one-per-day ceiling instead of a hard cap after which failsafe stops acting.
+- Exit code 77 for "cannot tell" (implemented in Phase 1).
