@@ -29,6 +29,7 @@ pub enum OutcomeEvent {
 pub struct DetectorState {
     pub name: String,
     pub consecutive_failures: u32,
+    pub failing: bool,
     pub policy: Policy,
     pub next_run: Instant,
 }
@@ -36,6 +37,7 @@ pub struct DetectorState {
 pub struct Monitor {
     states: HashMap<String, DetectorState>,
     order: Vec<String>,
+    stable_since: Option<Instant>,
 }
 
 impl Monitor {
@@ -54,6 +56,7 @@ impl Monitor {
                 DetectorState {
                     name: d.name.clone(),
                     consecutive_failures: 0,
+                    failing: false,
                     policy: d.policy.clone(),
                     next_run: start_time,
                 },
@@ -61,7 +64,11 @@ impl Monitor {
             order.push(d.name.clone());
         }
 
-        Self { states, order }
+        Self {
+            states,
+            order,
+            stable_since: Some(start_time),
+        }
     }
 
     pub fn next_due_detector(&self, now: Instant) -> Option<String> {
@@ -77,6 +84,14 @@ impl Monitor {
         self.states.values().map(|s| s.next_run).min()
     }
 
+    pub fn stable_since(&self) -> Option<Instant> {
+        self.stable_since
+    }
+
+    pub fn is_failing(&self, name: &str) -> Option<bool> {
+        self.states.get(name).map(|s| s.failing)
+    }
+
     pub fn record_outcome(
         &mut self,
         name: &str,
@@ -88,9 +103,14 @@ impl Monitor {
 
         match outcome {
             Outcome::Healthy => {
-                let was_failing = state.consecutive_failures > 0;
+                let was_failing = state.failing;
                 state.consecutive_failures = 0;
+                state.failing = false;
+
                 if was_failing {
+                    if self.states.values().all(|s| !s.failing) {
+                        self.stable_since = Some(now);
+                    }
                     Some(OutcomeEvent::Recovered)
                 } else {
                     Some(OutcomeEvent::Healthy)
@@ -100,6 +120,9 @@ impl Monitor {
             Outcome::Broken(_) => Some(OutcomeEvent::Broken),
             Outcome::Unhealthy(cause) => {
                 state.consecutive_failures += 1;
+                state.failing = true;
+                self.stable_since = None;
+
                 let trip = if state.consecutive_failures >= state.policy.threshold {
                     let action = state
                         .policy
@@ -161,6 +184,7 @@ mod tests {
         let start = Instant::now();
         let detectors = vec![make_detector("d1", 3, 60)];
         let mut monitor = Monitor::new(&detectors, start);
+        assert_eq!(monitor.stable_since(), Some(start));
 
         let event = monitor.record_outcome("d1", Outcome::Unhealthy(Cause::Exit(1)), start);
         assert_eq!(
@@ -173,92 +197,106 @@ mod tests {
             })
         );
         assert_eq!(monitor.consecutive_failures("d1"), Some(1));
+        assert_eq!(monitor.is_failing("d1"), Some(true));
+        assert_eq!(monitor.stable_since(), None);
 
-        let event = monitor.record_outcome("d1", Outcome::Healthy, start);
+        let t1 = start + Duration::from_secs(60);
+        let event = monitor.record_outcome("d1", Outcome::Healthy, t1);
         assert_eq!(event, Some(OutcomeEvent::Recovered));
         assert_eq!(monitor.consecutive_failures("d1"), Some(0));
+        assert_eq!(monitor.is_failing("d1"), Some(false));
+        assert_eq!(monitor.stable_since(), Some(t1));
 
-        let event = monitor.record_outcome("d1", Outcome::Healthy, start);
+        let t2 = t1 + Duration::from_secs(60);
+        let event = monitor.record_outcome("d1", Outcome::Healthy, t2);
         assert_eq!(event, Some(OutcomeEvent::Healthy));
         assert_eq!(monitor.consecutive_failures("d1"), Some(0));
+        assert_eq!(monitor.stable_since(), Some(t1)); // not bumped forward
     }
 
     #[test]
-    fn test_unknown_and_broken_leave_counter_unchanged() {
+    fn test_trip_then_healthy_yields_recovered_and_trip_does_not_start_stable() {
+        let start = Instant::now();
+        let detectors = vec![make_detector("d1", 2, 60)];
+        let mut monitor = Monitor::new(&detectors, start);
+
+        let t1 = start;
+        monitor.record_outcome("d1", Outcome::Unhealthy(Cause::Exit(1)), t1);
+        assert_eq!(monitor.stable_since(), None);
+
+        let t2 = t1 + Duration::from_secs(60);
+        let event = monitor.record_outcome("d1", Outcome::Unhealthy(Cause::Timeout), t2);
+        assert!(matches!(
+            event,
+            Some(OutcomeEvent::Unhealthy { trip: Some(_), .. })
+        ));
+        assert_eq!(monitor.consecutive_failures("d1"), Some(2));
+        assert_eq!(monitor.is_failing("d1"), Some(true));
+
+        // Attempt action (executed, dry-run, or refused)
+        monitor.action_attempted("d1");
+        assert_eq!(monitor.consecutive_failures("d1"), Some(0));
+        assert_eq!(monitor.is_failing("d1"), Some(true));
+        // Trip does NOT start the stable clock
+        assert_eq!(monitor.stable_since(), None);
+
+        // Another unhealthy run increments counter and stays failing
+        let t3 = t2 + Duration::from_secs(60);
+        monitor.record_outcome("d1", Outcome::Unhealthy(Cause::Exit(1)), t3);
+        assert_eq!(monitor.consecutive_failures("d1"), Some(1));
+        assert_eq!(monitor.is_failing("d1"), Some(true));
+        assert_eq!(monitor.stable_since(), None);
+
+        // Next run is healthy: transitions failing true -> false, emits Recovered, starts stable clock
+        let t4 = t3 + Duration::from_secs(60);
+        let event = monitor.record_outcome("d1", Outcome::Healthy, t4);
+        assert_eq!(event, Some(OutcomeEvent::Recovered));
+        assert_eq!(monitor.consecutive_failures("d1"), Some(0));
+        assert_eq!(monitor.is_failing("d1"), Some(false));
+        assert_eq!(monitor.stable_since(), Some(t4));
+    }
+
+    #[test]
+    fn test_multiple_detectors_stability() {
+        let start = Instant::now();
+        let detectors = vec![make_detector("d1", 2, 60), make_detector("d2", 2, 60)];
+        let mut monitor = Monitor::new(&detectors, start);
+        assert_eq!(monitor.stable_since(), Some(start));
+
+        // d1 fails -> system not stable
+        monitor.record_outcome("d1", Outcome::Unhealthy(Cause::Exit(1)), start);
+        assert_eq!(monitor.stable_since(), None);
+
+        // d2 healthy, but d1 still failing -> still not stable
+        let t1 = start + Duration::from_secs(60);
+        monitor.record_outcome("d2", Outcome::Healthy, t1);
+        assert_eq!(monitor.stable_since(), None);
+
+        // d1 recovers -> all healthy, system stable since t2
+        let t2 = t1 + Duration::from_secs(60);
+        monitor.record_outcome("d1", Outcome::Healthy, t2);
+        assert_eq!(monitor.stable_since(), Some(t2));
+    }
+
+    #[test]
+    fn test_unknown_and_broken_leave_counter_and_failing_unchanged() {
         let start = Instant::now();
         let detectors = vec![make_detector("d1", 3, 60)];
         let mut monitor = Monitor::new(&detectors, start);
 
         monitor.record_outcome("d1", Outcome::Unhealthy(Cause::Exit(1)), start);
         assert_eq!(monitor.consecutive_failures("d1"), Some(1));
+        assert_eq!(monitor.is_failing("d1"), Some(true));
 
         let event = monitor.record_outcome("d1", Outcome::Unknown, start);
         assert_eq!(event, Some(OutcomeEvent::Unknown));
         assert_eq!(monitor.consecutive_failures("d1"), Some(1));
+        assert_eq!(monitor.is_failing("d1"), Some(true));
 
         let event = monitor.record_outcome("d1", Outcome::Broken("error".into()), start);
         assert_eq!(event, Some(OutcomeEvent::Broken));
         assert_eq!(monitor.consecutive_failures("d1"), Some(1));
-    }
-
-    #[test]
-    fn test_trip_at_threshold_and_reset_on_action_attempted() {
-        let start = Instant::now();
-        let detectors = vec![make_detector("d1", 2, 60)];
-        let mut monitor = Monitor::new(&detectors, start);
-
-        let event1 = monitor.record_outcome("d1", Outcome::Unhealthy(Cause::Exit(1)), start);
-        assert_eq!(
-            event1,
-            Some(OutcomeEvent::Unhealthy {
-                cause: Cause::Exit(1),
-                consecutive_failures: 1,
-                threshold: 2,
-                trip: None,
-            })
-        );
-        assert_eq!(monitor.consecutive_failures("d1"), Some(1));
-
-        let event2 = monitor.record_outcome("d1", Outcome::Unhealthy(Cause::Timeout), start);
-        let trip = Trip {
-            detector: "d1".to_string(),
-            cause: Cause::Timeout,
-            consecutive_failures: 2,
-            action: Action::Reboot,
-        };
-        assert_eq!(
-            event2,
-            Some(OutcomeEvent::Unhealthy {
-                cause: Cause::Timeout,
-                consecutive_failures: 2,
-                threshold: 2,
-                trip: Some(trip),
-            })
-        );
-        assert_eq!(monitor.consecutive_failures("d1"), Some(2));
-
-        // After action is attempted, counter resets to 0
-        monitor.action_attempted("d1");
-        assert_eq!(monitor.consecutive_failures("d1"), Some(0));
-
-        // Persisting failure requires threshold runs again to re-trip
-        let event3 = monitor.record_outcome("d1", Outcome::Unhealthy(Cause::Exit(1)), start);
-        assert_eq!(
-            event3,
-            Some(OutcomeEvent::Unhealthy {
-                cause: Cause::Exit(1),
-                consecutive_failures: 1,
-                threshold: 2,
-                trip: None,
-            })
-        );
-        assert_eq!(monitor.consecutive_failures("d1"), Some(1));
-
-        let event4 = monitor.record_outcome("d1", Outcome::Unhealthy(Cause::Exit(1)), start);
-        match event4 {
-            Some(OutcomeEvent::Unhealthy { trip: Some(_), .. }) => {}
-            other => panic!("expected trip, got {:?}", other),
-        }
+        assert_eq!(monitor.is_failing("d1"), Some(true));
     }
 
     #[test]

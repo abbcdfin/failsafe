@@ -15,7 +15,7 @@ Each phase ends with something runnable end to end; later phases widen it.
   "would reboot". `--once` tests a detector. 19 tests. Architect review R1–R6 closed.
   Left over: `--detectors-dir` and the `--test-*` flags are temporary until Phase 3.
 
-- [ ] **Phase 2: real reboot behind the loop guard.** Persisted streak, boot grace,
+- [/] **Phase 2: real reboot behind the loop guard.** Persisted streak, boot grace,
   backoff, stable reset, reason logged at next startup, reboot with forced fallback. The
   guard and the reboot ship together: no build may contain one without the other.
   *Done when:* guard unit tests pass, and on a board a permanently failing detector

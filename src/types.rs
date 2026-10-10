@@ -1,8 +1,9 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Cause {
     Exit(i32),
     Signal(i32),
@@ -38,7 +39,7 @@ impl fmt::Display for Outcome {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     Reboot,
 }

@@ -124,7 +124,28 @@ period. With the defaults a detector that never recovers produces reboots at 5 m
 2. `systemctl reboot`. If it cannot be spawned, go straight to step 3.
 3. Keep pinging the watchdog. If the system is still up after `reboot_deadline`, `sync()`
    again and call `libc::reboot(RB_AUTOBOOT)`, which does not depend on userspace. If that
-   fails too, log an error and return to monitoring.
+   fails too, log an error, do not count the attempt in the streak, and return to
+   monitoring; the next allowed trip goes straight to this step.
+
+There is no intermediate `systemctl reboot --force`: if failsafe is still alive at the
+deadline, systemd never started the shutdown, and that command depends on the same systemd.
+
+Nothing in this sequence may wait without a bound. `systemctl reboot` is spawned and
+polled up to the deadline; `sync()` can block on dead storage, so the sequence moves on
+after a fixed wait whether or not it has returned.
+
+**Knowing whether the reboot happened.** There are three signals, of increasing strength:
+
+| Signal | What it proves |
+|---|---|
+| `systemctl reboot` exits non-zero, or cannot be spawned | The request failed. Force at once. |
+| `systemctl reboot` exits zero | Only that the request was queued; the command does not wait for the reboot. Keep waiting. |
+| failsafe is still running at the deadline | The machine has not rebooted. Kill the `systemctl` child if it is still running, then force. |
+| Boot ID at next startup | Definitive. The state file stores the kernel's boot ID (`/proc/sys/kernel/random/boot_id`) with the reason. Same ID at startup: failsafe was restarted and the machine never rebooted; the attempt is not counted in the streak and the next allowed reboot skips to the forced step. Different ID: it rebooted. |
+
+failsafe is itself stopped early in the shutdown it requested, so the forced reboot only
+covers a `systemctl reboot` that never gets that far. A shutdown that hangs later is
+covered by systemd's `RebootWatchdogSec` and the hardware watchdog (Phase 4).
 
 The steps that touch the machine sit behind one trait (`Rebooter`), so the sequence
 around them (guard verdict, state write, deadline) is tested with a fake.

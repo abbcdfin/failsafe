@@ -106,21 +106,31 @@ pub fn discover(dir: &Path, default_policy: &Policy) -> Result<Vec<Detector>, st
 mod tests {
     use super::*;
     use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::sync::{Mutex, MutexGuard};
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock_test() -> MutexGuard<'static, ()> {
+        TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn test_run_healthy() {
+        let _lock = lock_test();
         let outcome = run(Path::new("/bin/true"), Duration::from_secs(5));
         assert_eq!(outcome, Outcome::Healthy);
     }
 
     #[test]
     fn test_run_unhealthy_exit() {
+        let _lock = lock_test();
         let outcome = run(Path::new("/bin/false"), Duration::from_secs(5));
         assert_eq!(outcome, Outcome::Unhealthy(Cause::Exit(1)));
     }
 
     #[test]
     fn test_run_non_existent() {
+        let _lock = lock_test();
         let outcome = run(Path::new("/nonexistent/file"), Duration::from_secs(5));
         match outcome {
             Outcome::Broken(_) => {}
@@ -130,6 +140,7 @@ mod tests {
 
     #[test]
     fn test_discover_sorted_and_symlinks() {
+        let _lock = lock_test();
         let tmp = tempfile_dir("test_discover");
         let path_b = tmp.join("b-det");
         let path_a = tmp.join("a-det");
