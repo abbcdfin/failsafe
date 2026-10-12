@@ -1,7 +1,7 @@
 # Architectures built by `make`. To support another one, add its triple here or
 # override on the command line: make TARGETS=riscv64gc-unknown-linux-musl
 # Candidates: rustup target list | grep musl
-TARGETS ?= aarch64-unknown-linux-musl x86_64-unknown-linux-musl
+TARGETS ?= aarch64-unknown-linux-musl armv7-unknown-linux-musleabihf x86_64-unknown-linux-musl
 
 BIN  := failsafe
 DIST := dist

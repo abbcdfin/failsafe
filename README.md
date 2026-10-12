@@ -10,7 +10,7 @@ one keeps failing it resets the system to a proper state, without a person on si
 
 ## Installation
 
-Prebuilt Debian packages are produced by `make deb` for `arm64` and `amd64`:
+Prebuilt Debian packages are produced by `make deb` for `arm64`, `armhf`, and `amd64`:
 
 ```sh
 sudo apt install ./dist/failsafe_<version>-<revision>_<arch>.deb
@@ -100,9 +100,9 @@ make test
 ```
 
 Binaries land in `dist/failsafe-<target>`, each a single static file with no runtime
-dependencies. The default targets are `aarch64-unknown-linux-musl` and
-`x86_64-unknown-linux-musl`. To build for another architecture, add its triple to
-`TARGETS` in the `Makefile`, or override once:
+dependencies. The default targets are `aarch64-unknown-linux-musl`, `armv7-unknown-linux-musleabihf`
+(`armhf`), and `x86_64-unknown-linux-musl`. To build for another architecture, add its
+triple to `TARGETS` in the `Makefile`, or override once:
 
 ```sh
 make TARGETS=riscv64gc-unknown-linux-musl

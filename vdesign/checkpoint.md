@@ -18,9 +18,10 @@ Phase 2A (Debian/Ubuntu Packaging) host implementation and architect review (Q1â
 - License: Mono MIT license chosen by user; `LICENSE` added, `Cargo.toml` updated, decision recorded in `docs/architecture_design.md`.
 - Q1 & Q2: Integrated `cargo-deb` `#DEBHELPER#` (`deb-systemd-helper`) to track operator enable/disable state; implemented robust state-aware start/restart without `>/dev/null || true` so upgrade restarts only currently active units (keeping operator-disabled/stopped services off) and start/restart failures are visible in `apt`.
 - Q3: Updated `README.md` status line ("Phase 2 and 2A built, awaiting board verification"), added file creation command to "Adding a detector", clarified systemd restarts on exit until Phase 4 watchdog integration.
-- Q4: Made package filename and control version agree: `Makefile` defines `DEB_VERSION := $(VERSION)-$(DEB_REVISION)`, producing `dist/failsafe_0.1.0-1_arm64.deb` and `dist/failsafe_0.1.0-1_amd64.deb` matching control field `Version: 0.1.0-1`.
+- Q4: Made package filename and control version agree: `Makefile` defines `DEB_VERSION := $(VERSION)-$(DEB_REVISION)`, producing `dist/failsafe_0.1.0-1_arm64.deb`, `dist/failsafe_0.1.0-1_armhf.deb`, and `dist/failsafe_0.1.0-1_amd64.deb` matching control field `Version: 0.1.0-1`.
 - Q5: Deleted duplicate unit file `failsafe.service` at repository root; packaged unit is maintained in `debian/failsafe.service`.
-- Verified on host: 52 tests pass, clippy clean, `make deb` builds both packages. Full lifecycle (`install`, `remove`, `reinstall`, `purge`) passed in Ubuntu container.
+- Multi-arch expansion: Added `armv7-unknown-linux-musleabihf` (`armhf`) to default `TARGETS` in `Makefile` and `README.md`; compiles static musl binary `dist/failsafe-armv7-unknown-linux-musleabihf` and Debian package `dist/failsafe_0.1.0-1_armhf.deb` without external C cross-compilers; verified running under `qemu-arm`.
+- Verified on host: 52 tests pass, clippy clean, `make deb` builds all three packages (`arm64`, `armhf`, `amd64`). Full lifecycle (`install`, `remove`, `reinstall`, `purge`) passed in Ubuntu container.
 
 ## Next Steps
 

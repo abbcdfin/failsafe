@@ -207,7 +207,7 @@ failsafe (`WatchdogSec`), failsafe watches the system.
 
 ## Packaging
 
-One Debian package per architecture, `failsafe_<version>_<arch>.deb` (`arm64`, `amd64`),
+One Debian package per architecture, `failsafe_<version>_<arch>.deb` (`arm64`, `armhf`, `amd64`),
 built by `make deb` from the static binaries. No dependencies: the binary needs only the
 kernel, so one package serves every Ubuntu release.
 
