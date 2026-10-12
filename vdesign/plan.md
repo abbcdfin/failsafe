@@ -16,19 +16,29 @@ Each phase ends with something runnable end to end; later phases widen it.
   Left over: `--detectors-dir` and the `--test-*` flags are temporary until Phase 3.
 
 - [/] **Phase 2: real reboot behind the loop guard.** Persisted streak, boot grace,
-  backoff, stable reset, reason logged at next startup, reboot with forced fallback. The
-  guard and the reboot ship together: no build may contain one without the other.
-  *Done when:* guard unit tests pass, and on a board a permanently failing detector
-  produces reboots at the uptimes the backoff formula predicts.
-  Backoff (not a hard cap) confirmed by the user 2026-10-10. Board in `active_plan.md`.
+  backoff (confirmed by the user 2026-10-10), stable reset, boot ID check, reason logged
+  at next startup, bounded reboot sequence with forced fallback. Host part done: 52 tests,
+  architect review P1–P9 closed, commit `b368db8`.
+  *Still open:* the board run, a permanently failing detector producing reboots at the
+  uptimes the backoff formula predicts. It is done with the Phase 2A package; procedure in
+  `active_plan.md`.
+
+- [/] **Phase 2A: Ubuntu package.** `make deb` produces one `.deb` per architecture with
+  the binary, the detector and state directories and the systemd unit; the service is
+  enabled and started on install. Accepted by the user 2026-10-11; rationale in the
+  architecture document, "Packaging". Board in `active_plan.md`.
+  *Done when:* on the Ubuntu board, `apt install ./failsafe_*.deb` leaves the service
+  running, and remove, purge and upgrade behave as specified.
 
 - [ ] **Phase 3: configuration.** TOML file, per-detector policy and intervals, startup
-  validation, root-ownership check on detectors.
+  validation, root-ownership check on detectors. The package gains the config file as a
+  conffile.
   *Done when:* every key in the architecture document's example is honoured, and each
   invalid-input case exits non-zero with a message naming the problem.
 
-- [ ] **Phase 4: systemd integration and deployment.** `READY=1` / `WATCHDOG=1`, unit file,
-  `make install`, hardware watchdog via `RuntimeWatchdogSec` documented for the board.
+- [ ] **Phase 4: systemd watchdog integration.** `READY=1` / `WATCHDOG=1`, the unit becomes
+  `Type=notify` with `WatchdogSec`, hardware watchdog via `RuntimeWatchdogSec` documented
+  for the board. (The unit file and installation moved to Phase 2A.)
   Needs the board facts listed as unknown in the architecture document.
   *Done when:* on a board, `kill -STOP` of failsafe gets it restarted by systemd, and the
   service survives a reboot cycle enabled.

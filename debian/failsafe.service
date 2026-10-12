@@ -1,0 +1,12 @@
+[Unit]
+Description=Failsafe watchdog daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/failsafe
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

@@ -2,6 +2,9 @@
 name = "failsafe"
 version = "0.1.0"
 edition = "2024"
+authors = ["Jian Zhang <zhangjian@sys-in.com.cn>"]
+description = "Watchdog for unattended Linux devices"
+license = "MIT"
 
 [dependencies]
 libc = "0.2"
@@ -10,3 +13,21 @@ toml = "0.8"
 
 [profile.release]
 strip = true
+
+[package.metadata.deb]
+maintainer = "Jian Zhang <zhangjian@sys-in.com.cn>"
+copyright = "2026 Jian Zhang <zhangjian@sys-in.com.cn>"
+extended-description = """\
+A watchdog for unattended Linux devices. It runs health checks (detectors) \
+at configured intervals, tracks consecutive failures, and triggers recovery \
+actions (such as reboots protected by a reboot-loop guard) when thresholds \
+are exceeded."""
+section = "admin"
+priority = "optional"
+depends = ""
+maintainer-scripts = "debian"
+systemd-units = [{ unit-name = "failsafe", start = false, restart-after-upgrade = false }]
+assets = [
+    ["target/release/failsafe", "usr/sbin/failsafe", "755"],
+]
+

@@ -3,9 +3,46 @@
 A watchdog for unattended Linux devices. It runs a set of small health checks, and when
 one keeps failing it resets the system to a proper state, without a person on site.
 
-> **Status: design complete, not functional yet.** The build works and produces binaries
-> for every target architecture, but the binary only prints its version. Progress is
-> tracked in [vdesign/plan.md](vdesign/plan.md).
+> **Status: Phase 2 and 2A built, awaiting board verification.** Failsafe runs detectors,
+> counts failures, and executes bounded reboots guarded against reboot loops. Built as
+> static musl binaries and packaged as `.deb` packages for Ubuntu. Progress is tracked
+> in [vdesign/plan.md](vdesign/plan.md).
+
+## Installation
+
+Prebuilt Debian packages are produced by `make deb` for `arm64` and `amd64`:
+
+```sh
+sudo apt install ./dist/failsafe_<version>-<revision>_<arch>.deb
+```
+
+Installing the package automatically enables and starts `failsafe.service`. The package
+ships with an empty detector directory, so failsafe starts safely without rebooting.
+
+### Adding a detector
+
+Drop executable checks into `/etc/failsafe/detectors.d/`:
+
+```sh
+cat <<'EOF' | sudo tee /etc/failsafe/detectors.d/root-writable
+#!/bin/sh
+touch /var/lib/.failsafe-probe 2>/dev/null
+EOF
+sudo chown root:root /etc/failsafe/detectors.d/root-writable
+sudo chmod 0755 /etc/failsafe/detectors.d/root-writable
+```
+
+Test detectors manually without running the daemon:
+
+```sh
+failsafe --once
+```
+
+### Viewing logs
+
+```sh
+journalctl -u failsafe -f
+```
 
 ## Why
 
@@ -32,8 +69,8 @@ the two:
    resets it.
 5. Records why it rebooted, and reports it after the next boot.
 
-failsafe is itself watched: systemd restarts it if it hangs, and the hardware watchdog
-resets the board if systemd hangs.
+failsafe is itself watched: systemd restarts it if it exits, and the hardware watchdog
+resets the board if systemd hangs (systemd watchdog pinging during hangs arrives in Phase 4).
 
 ## Writing a detector
 
@@ -58,6 +95,7 @@ Requires Rust (via rustup) and GNU make. No C cross-toolchain is needed for any 
 
 ```sh
 make          # static binaries for every architecture in the Makefile's TARGETS
+make deb      # Debian packages (.deb) in dist/
 make test
 ```
 

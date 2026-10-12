@@ -205,6 +205,36 @@ failsafe (`WatchdogSec`), failsafe watches the system.
 - The ping comes from the loop itself, never a helper thread: it must prove the loop turns.
 - Unit: `Type=notify`, `Restart=always`, `WatchdogSec` > largest detector timeout.
 
+## Packaging
+
+One Debian package per architecture, `failsafe_<version>_<arch>.deb` (`arm64`, `amd64`),
+built by `make deb` from the static binaries. No dependencies: the binary needs only the
+kernel, so one package serves every Ubuntu release.
+
+| Path | Content | Owner, mode |
+|---|---|---|
+| `/usr/sbin/failsafe` | the binary | root, 0755 |
+| `/usr/lib/systemd/system/failsafe.service` | the unit | root, 0644 |
+| `/etc/failsafe/detectors.d/` | empty; detectors are installed by the operator | root, 0755 |
+| `/var/lib/failsafe/` | state file | root, 0755 |
+
+- **Unit:** `ExecStart=/usr/sbin/failsafe` with no flags (the built-in defaults are the
+  paths above), root, `Restart=always` with a restart delay, `WantedBy=multi-user.target`.
+  `Type=simple` until Phase 4 makes it `Type=notify` with `WatchdogSec`.
+- **Install:** the service is enabled and started. This is safe because the package ships
+  no detectors: with an empty directory failsafe only logs a warning and can never reboot.
+  The package must never ship a detector.
+- **Upgrade:** the operator's choice is kept. A running service is restarted; a stopped
+  but enabled one is started; a disabled one stays disabled and stopped. The streak is on
+  disk and survives; the in-memory failure counts start again.
+- **Scripts:** enabling is tracked by `deb-systemd-helper` (from `init-system-helpers`,
+  essential on Ubuntu, so not declared as a dependency). A failed start or restart fails
+  the installation visibly instead of being ignored.
+- **Remove:** stops the service; detectors and state stay. The enabled or disabled choice
+  is remembered and restored by a reinstall; only a purge resets it to enabled.
+- **Purge:** also deletes `/var/lib/failsafe`, and `/etc/failsafe/detectors.d` only if it
+  is empty. Detectors belong to the operator, not to the package.
+
 ## Logging
 
 Lines on stderr with sd-daemon priority prefixes (`<3>` error, `<4>` warning, `<6>` info).
@@ -285,8 +315,24 @@ Reboot policy comes from the configuration file only, with no environment variab
 Outside the file remain CLI flags (`--config PATH`, `--dry-run`, `--once`) and `NOTIFY_SOCKET`
 which carries no policy and is required by systemd's watchdog protocol.
 
+### Debian package built with `cargo-deb` (2026-10-11)
+
+The first board runs Ubuntu, so installation is a `.deb` (user request 2026-10-11), which
+replaces the planned `make install`.
+
+- `cargo-deb` writes the archive itself and needs no `dpkg` on the build host, which is
+  not Debian-based. It is a build tool, not a dependency of the binary, so the pure-Rust
+  constraint is unaffected.
+- Start on install (user decision): the Debian convention, and harmless with no detectors.
+- A Yocto recipe stays a candidate for images that are not Debian-based.
+
+### MIT license (2026-10-11)
+
+The MIT license was chosen for failsafe (user decision 2026-10-11).
+
 ## Unknown about the first board
 
-Kernel version, systemd version, watchdog driver timeout range and `nowayout`. The probe
+Known: aarch64, Ubuntu. Unknown: kernel version, systemd version, watchdog driver timeout
+range and `nowayout`. The probe
 in the session scratchpad reports them; it has not been run on the board. Needed before
 Phase 4, not before.

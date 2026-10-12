@@ -14,12 +14,24 @@ Phase 2 host implementation and architect review findings (P1–P9) are complete
 
 Phase 2 is ready for the physical board test (~90 minutes) before being marked done.
 
+Phase 2A (Debian/Ubuntu Packaging) host implementation and architect review (Q1–Q5) are complete:
+- License: Mono MIT license chosen by user; `LICENSE` added, `Cargo.toml` updated, decision recorded in `docs/architecture_design.md`.
+- Q1 & Q2: Integrated `cargo-deb` `#DEBHELPER#` (`deb-systemd-helper`) to track operator enable/disable state; implemented robust state-aware start/restart without `>/dev/null || true` so upgrade restarts only currently active units (keeping operator-disabled/stopped services off) and start/restart failures are visible in `apt`.
+- Q3: Updated `README.md` status line ("Phase 2 and 2A built, awaiting board verification"), added file creation command to "Adding a detector", clarified systemd restarts on exit until Phase 4 watchdog integration.
+- Q4: Made package filename and control version agree: `Makefile` defines `DEB_VERSION := $(VERSION)-$(DEB_REVISION)`, producing `dist/failsafe_0.1.0-1_arm64.deb` and `dist/failsafe_0.1.0-1_amd64.deb` matching control field `Version: 0.1.0-1`.
+- Q5: Deleted duplicate unit file `failsafe.service` at repository root; packaged unit is maintained in `debian/failsafe.service`.
+- Verified on host: 52 tests pass, clippy clean, `make deb` builds both packages. Full lifecycle (`install`, `remove`, `reinstall`, `purge`) passed in Ubuntu container.
+
 ## Next Steps
 
-1. Board run (~90 minutes):
-   - Install `dist/failsafe-aarch64-unknown-linux-musl` and a failing detector on the physical board. Run as root without `--dry-run`.
-   - Observe reboots at ~5, 15, 25, 45 minutes of uptime and verify streak logging.
-   - Switch detector to exit 0 and verify streak reset after 30 minutes.
+1. Board run on the aarch64 Ubuntu board (~90 minutes):
+   - Install `dist/failsafe_0.1.0-1_arm64.deb` (`sudo apt install ./failsafe_0.1.0-1_arm64.deb`).
+   - Verify `systemctl status failsafe` is active and enabled, journal shows "no detectors found" warning.
+   - Verify upgrade path: reinstall same package, service restarts and stays active.
+   - Verify operator override persistence: after `systemctl disable --now failsafe`, reinstalling package leaves service disabled and stopped.
+   - Verify remove/purge behavior: `apt remove failsafe`, then `apt purge failsafe`.
+   - Reinstall package, place failing detector in `/etc/failsafe/detectors.d/` and observe reboots at ~5, 15, 25, 45 minutes of uptime.
+   - Replace detector with exit 0 and verify streak reset after 30 minutes.
    - Record observed uptimes in this file.
 2. Exit code 77 is implemented but still listed as unconfirmed in `docs/product_specification.md`.
 3. Run the probe on the board before Phase 4 (kernel, systemd, watchdog details).
