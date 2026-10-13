@@ -1,192 +1,33 @@
 use std::fs;
-use std::path::PathBuf;
 use std::process;
 use std::time::{Duration, Instant};
 
 use failsafe::action::{self, SystemRebooter};
+use failsafe::config::{self, Config, LoadError};
 use failsafe::detector;
-use failsafe::guard::{self, GuardConfig};
+use failsafe::guard;
 use failsafe::monitor::{Monitor, OutcomeEvent};
 use failsafe::orchestration;
-use failsafe::types::{Outcome, Policy};
+use failsafe::types::Outcome;
 use failsafe::{log_error, log_info, log_warn};
 
-struct Args {
-    detectors_dir: PathBuf,
-    state_dir: PathBuf,
-    dry_run: bool,
-    once: bool,
-    policy: Policy,
-    test_uptime: Option<Duration>,
-}
-
-fn print_usage() {
-    eprintln!(
-        "Usage: failsafe [--detectors-dir PATH] [--state-dir PATH] [--dry-run] [--once]\n\n\
-         Options:\n  \
-           --detectors-dir PATH   Directory containing detectors (default: /etc/failsafe/detectors.d)\n  \
-           --state-dir PATH       Directory for state persistence (default: /var/lib/failsafe)\n  \
-           --dry-run              Do not reboot; log what would have been done\n  \
-           --once                 Run each detector once, report outcomes, and exit\n  \
-           -h, --help             Show this help message"
-    );
-}
-
-fn parse_test_interval(val: &str, policy: &mut Policy) {
-    match val.parse::<u64>() {
-        Ok(ms) if ms > 0 => {
-            policy.interval = Duration::from_millis(ms);
-        }
-        _ => {
-            log_error!("invalid value for --test-interval-ms: must be a positive integer");
-            process::exit(1);
-        }
-    }
-}
-
-fn parse_test_timeout(val: &str, policy: &mut Policy) {
-    match val.parse::<u64>() {
-        Ok(ms) if ms > 0 => {
-            policy.timeout = Duration::from_millis(ms);
-        }
-        _ => {
-            log_error!("invalid value for --test-timeout-ms: must be a positive integer");
-            process::exit(1);
-        }
-    }
-}
-
-fn parse_test_threshold(val: &str, policy: &mut Policy) {
-    match val.parse::<u32>() {
-        Ok(threshold) if threshold > 0 => {
-            policy.threshold = threshold;
-        }
-        _ => {
-            log_error!("invalid value for --test-threshold: must be a positive integer");
-            process::exit(1);
-        }
-    }
-}
-
-fn parse_args() -> Args {
-    let mut detectors_dir = PathBuf::from("/etc/failsafe/detectors.d");
-    let mut state_dir = PathBuf::from("/var/lib/failsafe");
-    let mut dry_run = false;
-    let mut once = false;
-    let mut policy = Policy::default();
-    let mut test_uptime = None;
-
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut i = 0;
-    while i < args.len() {
-        let arg = &args[i];
-        if arg == "--dry-run" {
-            dry_run = true;
-        } else if arg == "--once" {
-            once = true;
-        } else if arg == "-h" || arg == "--help" {
-            print_usage();
-            process::exit(0);
-        } else if arg == "--detectors-dir" {
-            i += 1;
-            if i >= args.len() {
-                log_error!("missing argument for --detectors-dir");
-                process::exit(1);
-            }
-            detectors_dir = PathBuf::from(&args[i]);
-        } else if let Some(val) = arg.strip_prefix("--detectors-dir=") {
-            detectors_dir = PathBuf::from(val);
-        } else if arg == "--state-dir" {
-            i += 1;
-            if i >= args.len() {
-                log_error!("missing argument for --state-dir");
-                process::exit(1);
-            }
-            state_dir = PathBuf::from(&args[i]);
-        } else if let Some(val) = arg.strip_prefix("--state-dir=") {
-            state_dir = PathBuf::from(val);
-        } else if arg == "--test-interval-ms" {
-            i += 1;
-            if i >= args.len() {
-                log_error!("missing argument for --test-interval-ms");
-                process::exit(1);
-            }
-            parse_test_interval(&args[i], &mut policy);
-        } else if let Some(val) = arg.strip_prefix("--test-interval-ms=") {
-            parse_test_interval(val, &mut policy);
-        } else if arg == "--test-timeout-ms" {
-            i += 1;
-            if i >= args.len() {
-                log_error!("missing argument for --test-timeout-ms");
-                process::exit(1);
-            }
-            parse_test_timeout(&args[i], &mut policy);
-        } else if let Some(val) = arg.strip_prefix("--test-timeout-ms=") {
-            parse_test_timeout(val, &mut policy);
-        } else if arg == "--test-threshold" {
-            i += 1;
-            if i >= args.len() {
-                log_error!("missing argument for --test-threshold");
-                process::exit(1);
-            }
-            parse_test_threshold(&args[i], &mut policy);
-        } else if let Some(val) = arg.strip_prefix("--test-threshold=") {
-            parse_test_threshold(val, &mut policy);
-        } else if arg == "--test-uptime-secs" {
-            i += 1;
-            if i >= args.len() {
-                log_error!("missing argument for --test-uptime-secs");
-                process::exit(1);
-            }
-            match args[i].parse::<u64>() {
-                Ok(secs) => test_uptime = Some(Duration::from_secs(secs)),
-                _ => {
-                    log_error!("invalid value for --test-uptime-secs: must be a positive integer");
-                    process::exit(1);
-                }
-            }
-        } else if let Some(val) = arg.strip_prefix("--test-uptime-secs=") {
-            match val.parse::<u64>() {
-                Ok(secs) => test_uptime = Some(Duration::from_secs(secs)),
-                _ => {
-                    log_error!("invalid value for --test-uptime-secs: must be a positive integer");
-                    process::exit(1);
-                }
-            }
-        } else {
-            log_error!("unknown argument: {arg}");
-            process::exit(1);
-        }
-        i += 1;
-    }
-
-    if let Err(err) = policy.validate() {
-        log_error!("invalid policy: {err}");
-        process::exit(1);
-    }
-
-    if test_uptime.is_some() && !dry_run {
-        log_error!("--test-uptime-secs is only permitted with --dry-run");
-        process::exit(1);
-    }
-
-    Args {
-        detectors_dir,
-        state_dir,
-        dry_run,
-        once,
-        policy,
-        test_uptime,
-    }
-}
-
 fn main() {
-    let args = parse_args();
+    let config = match config::load(std::env::args().skip(1)) {
+        Ok(cfg) => cfg,
+        Err(LoadError::Help) => {
+            config::print_usage();
+            process::exit(0);
+        }
+        Err(LoadError::Exit(msg)) => {
+            log_error!("{msg}");
+            process::exit(1);
+        }
+    };
 
-    if args.once {
-        run_once(args);
+    if config.once {
+        run_once(&config);
     } else {
-        if !args.dry_run {
+        if !config.dry_run {
             let euid = unsafe { libc::geteuid() };
             if euid != 0 {
                 log_error!(
@@ -195,22 +36,44 @@ fn main() {
                 process::exit(1);
             }
         }
-        run_daemon(args);
+        run_daemon(config);
     }
 }
 
-fn run_once(args: Args) {
-    let detectors = match detector::discover(&args.detectors_dir, &args.policy) {
+fn validate_unmatched_detectors(config: &Config, detectors: &[failsafe::types::Detector]) {
+    for name in config.detectors.keys() {
+        if !detectors.iter().any(|d| d.name == *name) {
+            if let Some(ref path) = config.loaded_from {
+                log_error!(
+                    "config file {}: detector '{name}' has no matching file in {}",
+                    path.display(),
+                    config.detectors_dir.display()
+                );
+            } else {
+                log_error!(
+                    "detector '{name}' has no matching file in {}",
+                    config.detectors_dir.display()
+                );
+            }
+            process::exit(1);
+        }
+    }
+}
+
+fn run_once(config: &Config) {
+    let detectors = match detector::discover(&config.detectors_dir, config) {
         Ok(dets) => dets,
         Err(err) => {
             log_error!(
                 "cannot read detectors directory {}: {}",
-                args.detectors_dir.display(),
+                config.detectors_dir.display(),
                 err
             );
             process::exit(1);
         }
     };
+
+    validate_unmatched_detectors(config, &detectors);
 
     let mut failed = false;
     for d in &detectors {
@@ -231,39 +94,66 @@ fn run_once(args: Args) {
     }
 }
 
-fn run_daemon(args: Args) {
-    let detectors = match detector::discover(&args.detectors_dir, &args.policy) {
+fn run_daemon(config: Config) {
+    let detectors = match detector::discover(&config.detectors_dir, &config) {
         Ok(dets) => dets,
         Err(err) => {
             log_error!(
                 "cannot read detectors directory {}: {}",
-                args.detectors_dir.display(),
+                config.detectors_dir.display(),
                 err
             );
             process::exit(1);
         }
     };
 
-    log_info!("watching detectors in {}", args.detectors_dir.display());
+    validate_unmatched_detectors(&config, &detectors);
+
+    if let Some(ref path) = config.loaded_from {
+        log_info!("using configuration from {}", path.display());
+    } else {
+        log_info!("using built-in defaults");
+    }
+
+    log_info!("watching detectors in {}", config.detectors_dir.display());
     if detectors.is_empty() {
-        log_warn!("no detectors found in {}", args.detectors_dir.display());
+        log_warn!("no detectors found in {}", config.detectors_dir.display());
     } else {
         for d in &detectors {
             log_info!("found detector: {}", d.name);
         }
     }
 
-    let guard_config = GuardConfig::default();
+    for d in &detectors {
+        if d.policy != config.defaults {
+            let actions_str = d
+                .policy
+                .actions
+                .iter()
+                .map(|a| match a {
+                    failsafe::types::Action::Reboot => "\"reboot\"",
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            log_info!(
+                "detector {} overrides defaults: interval_secs={}, timeout_secs={}, threshold={}, actions=[{actions_str}]",
+                d.name,
+                d.policy.interval.as_secs(),
+                d.policy.timeout.as_secs(),
+                d.policy.threshold,
+            );
+        }
+    }
 
-    if !args.dry_run {
-        let _ = fs::create_dir_all(&args.state_dir);
-        let probe = args
+    if !config.dry_run {
+        let _ = fs::create_dir_all(&config.state_dir);
+        let probe = config
             .state_dir
             .join(format!(".probe.{}", std::process::id()));
         if let Err(e) = fs::write(&probe, b"") {
             log_error!(
                 "state directory {} is not writable: {}; reboots will be refused",
-                args.state_dir.display(),
+                config.state_dir.display(),
                 e
             );
         } else {
@@ -272,7 +162,7 @@ fn run_daemon(args: Args) {
     }
 
     let (mut state, load_err) =
-        guard::load_state(&args.state_dir, guard_config.worst_case_streak());
+        guard::load_state(&config.state_dir, config.reboot.worst_case_streak());
     if let Some(err) = load_err {
         log_error!("{err}; streak set to {}", state.streak);
     }
@@ -281,8 +171,8 @@ fn run_daemon(args: Args) {
     let mut force_next = orchestration::process_startup_state(
         &mut state,
         current_boot_id.as_deref(),
-        &args.state_dir,
-        args.dry_run,
+        &config.state_dir,
+        config.dry_run,
     );
     if state.streak > 0 && state.last_reason.is_none() {
         log_info!("current reboot streak is {}", state.streak);
@@ -297,10 +187,10 @@ fn run_daemon(args: Args) {
         orchestration::check_stable(
             now,
             monitor.stable_since(),
-            &guard_config,
-            &args.state_dir,
+            &config.reboot,
+            &config.state_dir,
             &mut state,
-            args.dry_run,
+            config.dry_run,
         );
 
         if let Some(name) = monitor.next_due_detector(now) {
@@ -328,15 +218,13 @@ fn run_daemon(args: Args) {
                                 threshold
                             );
                             if let Some(trip) = trip {
-                                let uptime = args
-                                    .test_uptime
-                                    .unwrap_or_else(action::read_uptime);
+                                let uptime = action::read_uptime();
                                 orchestration::handle_trip(
                                     &trip,
                                     uptime,
-                                    args.dry_run,
-                                    &guard_config,
-                                    &args.state_dir,
+                                    config.dry_run,
+                                    &config.reboot,
+                                    &config.state_dir,
                                     &mut state,
                                     &mut rebooter,
                                     &mut force_next,

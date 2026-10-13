@@ -8,12 +8,11 @@ Each phase ends with something runnable end to end; later phases widen it.
 ## Phases
 
 - [x] **Phase 0: scaffold and multi-architecture static build.** `make` produces
-  `dist/failsafe-<target>` for aarch64 and x86_64.
+  `dist/failsafe-<target>` for aarch64, armv7 (hard-float, added 2026-10-12) and x86_64.
 
 - [x] **Phase 1: walking skeleton, dry-run only.** Detectors are discovered (symlinks
   followed), run under a timeout in their own process group, counted, and a trip logs
   "would reboot". `--once` tests a detector. 19 tests. Architect review R1–R6 closed.
-  Left over: `--detectors-dir` and the `--test-*` flags are temporary until Phase 3.
 
 - [/] **Phase 2: real reboot behind the loop guard.** Persisted streak, boot grace,
   backoff (confirmed by the user 2026-10-10), stable reset, boot ID check, reason logged
@@ -23,18 +22,22 @@ Each phase ends with something runnable end to end; later phases widen it.
   uptimes the backoff formula predicts. It is done with the Phase 2A package; procedure in
   `active_plan.md`.
 
-- [/] **Phase 2A: Ubuntu package.** `make deb` produces one `.deb` per architecture with
-  the binary, the detector and state directories and the systemd unit; the service is
-  enabled and started on install. Accepted by the user 2026-10-11; rationale in the
-  architecture document, "Packaging". Board in `active_plan.md`.
-  *Done when:* on the Ubuntu board, `apt install ./failsafe_*.deb` leaves the service
-  running, and remove, purge and upgrade behave as specified.
+- [/] **Phase 2A: Ubuntu package.** `make deb` builds one `.deb` per architecture (`arm64`,
+  `armhf`, `amd64`) with `cargo-deb`: binary, unit, directories; enabled and started on
+  install; an operator's `disable` survives upgrades. Host part done: container lifecycle
+  on amd64, architect review Q1–Q5 closed, commit `7292395`.
+  *Still open:* the checks on the board, where service start, stop and restart run for
+  the first time. Procedure in `active_plan.md`.
 
-- [ ] **Phase 3: configuration.** TOML file, per-detector policy and intervals, startup
-  validation, root-ownership check on detectors. The package gains the config file as a
-  conffile.
-  *Done when:* every key in the architecture document's example is honoured, and each
-  invalid-input case exits non-zero with a message naming the problem.
+- [x] **Phase 3: configuration.** One TOML file read at startup, shipped in the package as
+  a conffile with every key commented out at its default. Per-detector policy. Strict
+  startup: an unknown key, a wrong type, an out-of-range value or a `[detector.NAME]`
+  without a file stops failsafe with a message. Whole seconds, at most 365 days;
+  `stable_after_secs` at least `boot_grace_secs + backoff_base_secs` (user decisions
+  2026-10-13). As root, the config file, the detectors directory and each detector must be
+  root-owned and not writable by others. Temporary flags removed. 75 unit and 18
+  integration tests; unit tests also pass for armv7 under `qemu-arm`; architect review
+  C1–C6 closed.
 
 - [ ] **Phase 4: systemd watchdog integration.** `READY=1` / `WATCHDOG=1`, the unit becomes
   `Type=notify` with `WatchdogSec`, hardware watchdog via `RuntimeWatchdogSec` documented

@@ -3,10 +3,10 @@
 A watchdog for unattended Linux devices. It runs a set of small health checks, and when
 one keeps failing it resets the system to a proper state, without a person on site.
 
-> **Status: Phase 2 and 2A built, awaiting board verification.** Failsafe runs detectors,
-> counts failures, and executes bounded reboots guarded against reboot loops. Built as
-> static musl binaries and packaged as `.deb` packages for Ubuntu. Progress is tracked
-> in [vdesign/plan.md](vdesign/plan.md).
+> **Status: Phase 3 built and verified on host, awaiting board verification.** Failsafe runs detectors,
+> counts failures, and executes bounded reboots guarded against reboot loops. Configuration is loaded
+> from `/etc/failsafe/failsafe.toml` with strict startup validation. Built as static musl binaries and
+> packaged as `.deb` packages for Ubuntu. Progress is tracked in [vdesign/plan.md](vdesign/plan.md).
 
 ## Installation
 
@@ -36,6 +36,28 @@ Test detectors manually without running the daemon:
 
 ```sh
 failsafe --once
+```
+
+### Configuration
+
+Failsafe reads `/etc/failsafe/failsafe.toml` at startup. The package installs this file with every key commented out showing its default.
+
+To adjust intervals, guard thresholds, or per-detector policies, edit the file:
+
+```sh
+sudo nano /etc/failsafe/failsafe.toml
+```
+
+Test the configuration and detectors without running the daemon:
+
+```sh
+failsafe --once
+```
+
+Restart the service to apply the new configuration:
+
+```sh
+sudo systemctl restart failsafe
 ```
 
 ### Viewing logs

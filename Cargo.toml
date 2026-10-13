@@ -29,5 +29,6 @@ maintainer-scripts = "debian"
 systemd-units = [{ unit-name = "failsafe", start = false, restart-after-upgrade = false }]
 assets = [
     ["target/release/failsafe", "usr/sbin/failsafe", "755"],
+    ["failsafe.toml", "etc/failsafe/failsafe.toml", "644"],
 ]
 

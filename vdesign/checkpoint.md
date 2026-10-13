@@ -23,12 +23,20 @@ Phase 2A (Debian/Ubuntu Packaging) host implementation and architect review (Q1â
 - Multi-arch expansion: Added `armv7-unknown-linux-musleabihf` (`armhf`) to default `TARGETS` in `Makefile` and `README.md`; compiles static musl binary `dist/failsafe-armv7-unknown-linux-musleabihf` and Debian package `dist/failsafe_0.1.0-1_armhf.deb` without external C cross-compilers; verified running under `qemu-arm`.
 - Verified on host: 52 tests pass, clippy clean, `make deb` builds all three packages (`arm64`, `armhf`, `amd64`). Full lifecycle (`install`, `remove`, `reinstall`, `purge`) passed in Ubuntu container.
 
+Phase 3 (Configuration) host implementation and architect review (C1â€“C6) are complete:
+- Strict TOML configuration parsing and validation in `src/config.rs`: `*_secs` keys are whole integers (`u64`) between 1 and 31536000 (365 days; `boot_grace_secs >= 0`), decimals/floats and values exceeding the ceiling rejected; zero threshold, invalid action, inverted backoff (`max < base`), `stable_after_secs` below `boot_grace_secs + backoff_base_secs` (evaluated after defaults), or relative paths fail startup immediately.
+- File and CLI handling: deduplicated `load_file` opens file handle once and checks handle metadata; missing default `/etc/failsafe/failsafe.toml` uses built-in defaults; missing `--config` path is a hard error; `--dry-run`, `--once`, `-h`/`--help`.
+- Root security ownership checks: pure function `check_permissions(euid, uid, mode)` in `src/detector.rs` enforced on config file and detectors (directory and files) when effective UID is 0 (must be root-owned and not group/world writable `0o022`). Permission error mode masked with `0o7777` to display clean octal permissions (`0775`).
+- Wire into daemon & discovery: removed all temporary CLI flags; each detector receives its own resolved policy; unmatched `[detector.NAME]` tables halt startup; clean key-value format logging for detector overrides.
+- Packaging & parity: shipped `/etc/failsafe/failsafe.toml` template conffile with explanatory header (documenting whole seconds rule), per-key comments (accurate continuous healthy reset semantics for `stable_after_secs` and floor requirement), and commented detector example; unit parity tests verify commented-out and uncommented template match `Config::default()` and detector example parses validly; `debian/postrm` cleans conffile on purge.
+- Verification: 93 tests pass (75 unit, 18 integration); `cargo clippy --all-targets` 0 warnings; `make deb` builds all 3 packages (`arm64`, `armhf`, `amd64`); armv7 unit tests pass under `qemu-arm`; Ubuntu 24.04 container lifecycle verified.
+
 ## Next Steps
 
-1. Board run on the aarch64 Ubuntu board (~90 minutes):
+1. Board run on the aarch64 Ubuntu board:
    - Install `dist/failsafe_0.1.0-1_arm64.deb` (`sudo apt install ./failsafe_0.1.0-1_arm64.deb`).
-   - Verify `systemctl status failsafe` is active and enabled, journal shows "no detectors found" warning.
-   - Verify upgrade path: reinstall same package, service restarts and stays active.
+   - Verify `systemctl status failsafe` is active and enabled, journal shows "using configuration from /etc/failsafe/failsafe.toml" (or built-in defaults) and "no detectors found" warning.
+   - Verify upgrade path: reinstall same package, service restarts and stays active; modified config file survives.
    - Verify operator override persistence: after `systemctl disable --now failsafe`, reinstalling package leaves service disabled and stopped.
    - Verify remove/purge behavior: `apt remove failsafe`, then `apt purge failsafe`.
    - Reinstall package, place failing detector in `/etc/failsafe/detectors.d/` and observe reboots at ~5, 15, 25, 45 minutes of uptime.

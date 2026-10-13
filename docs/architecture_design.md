@@ -160,9 +160,7 @@ machine from ever being a reboot target by accident.
 
 ## Configuration
 
-One TOML file, default `/etc/failsafe/failsafe.toml`. Missing file: all defaults.
-Malformed file, unknown key, or a `[detector.NAME]` with no matching file: exit non-zero
-at startup with the reason.
+One TOML file, read once at startup. Changing it takes effect at the next restart.
 
 ```toml
 dry_run        = false
@@ -186,13 +184,56 @@ actions       = ["reboot"]
 threshold = 5
 ```
 
-Command line: `failsafe [--config PATH] [--dry-run] [--once]`. `--once` runs every detector
-one time, prints name and outcome, and exits 0 only if none was unhealthy or broken; it is
-how a detector is tested on a board. Flags are parsed by hand; three flags do not justify
-an argument-parsing crate.
+Every key is optional; a missing key takes the value shown above.
 
-When running as root, the detectors directory and each detector must be owned by root and
-not writable by group or others; otherwise the detector is `Broken`.
+**Which file.** Default `/etc/failsafe/failsafe.toml`. If the default file does not exist,
+all defaults apply. A file named with `--config` must exist.
+
+**Strictness.** Any of the following stops failsafe at startup, non-zero, with a message
+naming the file and the key. An invalid value never falls back to its default: the operator
+believes the file is in force, so running with something else is worse than not running.
+
+- the file cannot be read or is not valid TOML
+- an unknown key or table, at any level (a mistyped key must not be silently ignored)
+- a value of the wrong type
+- a `[detector.NAME]` with no matching file in the detectors directory
+- a value outside its range (below)
+
+| Key | Rule |
+|---|---|
+| `*_secs` | a whole number of seconds; a decimal is rejected; at most 31536000 (365 days), so no time arithmetic can overflow |
+| `interval_secs`, `timeout_secs`, `backoff_base_secs`, `reboot_deadline_secs` | 1 or more |
+| `boot_grace_secs` | 0 or more |
+| `backoff_max_secs` | not below `backoff_base_secs` |
+| `stable_after_secs` | not below `boot_grace_secs + backoff_base_secs` |
+| `threshold` | integer, 1 or more |
+| `actions` | non-empty list; only `"reboot"` exists |
+| `detectors_dir`, `state_dir` | absolute path |
+
+The rules are checked on the final values, after defaults are filled in, so a file that
+sets only one side of a pair is still checked against the default of the other.
+
+**Command line.** `failsafe [--config PATH] [--dry-run] [--once]`, parsed by hand.
+
+- Dry-run is on if either `--dry-run` or `dry_run = true` says so. Neither can turn the
+  other off, so the flag can only make a run safer.
+- `--once` runs every detector one time with its configured timeout, prints name and
+  outcome, and exits 0 only if none was unhealthy or broken. It is how a detector, and a
+  configuration, is tested on a board. It needs no root.
+- Paths, intervals and guard values have no flags. The temporary `--detectors-dir`,
+  `--state-dir` and `--test-*` flags of Phases 1 and 2 are removed; tests write a config
+  file.
+
+**Ownership.** When running as root, failsafe executes whatever is in the detectors
+directory as root, so nobody else may be able to change it:
+
+- The config file must be owned by root and not writable by group or others; otherwise
+  startup fails.
+- The detectors directory and each detector (the file a symlink resolves to) must be owned
+  by root and not writable by group or others. A detector that fails this is `Broken`:
+  logged, never run, never counted. If the directory fails it, every detector is `Broken`.
+  Checked before every run, not only at startup.
+- Not root (dry-run or `--once` by a developer): no ownership check.
 
 ## systemd and the liveness chain
 
@@ -329,6 +370,19 @@ replaces the planned `make install`.
 ### MIT license (2026-10-11)
 
 The MIT license was chosen for failsafe (user decision 2026-10-11).
+
+### Whole seconds, and a floor on the stable period (user decision 2026-10-13)
+
+- **Whole seconds only.** failsafe is a backup mechanism that returns a device to a usable
+  state; it does not need sub-second response. Integer seconds remove rounding, NaN and
+  the zero-duration cases that decimals allowed (a zero interval ran one detector in a
+  tight loop; a zero timeout made every detector unhealthy). Tests use 1 s values and
+  `threshold = 1` where they need speed.
+- **`stable_after_secs` is at least `boot_grace_secs + backoff_base_secs`.** That sum is the
+  uptime at which a repeat reboot first becomes possible. A shorter stable period would
+  forget the streak before then and every reboot would wait only for the boot grace, which
+  turns the backoff off. With this rule no configuration can do that. Other values keep
+  no floor: an operator may still choose an aggressive guard.
 
 ## Unknown about the first board
 

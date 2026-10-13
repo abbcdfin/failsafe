@@ -1,0 +1,45 @@
+# failsafe daemon configuration
+#
+# Changes take effect after restarting the service:
+#   systemctl restart failsafe
+#
+# Check configuration and detector health without rebooting:
+#   failsafe --once
+#
+# All *_secs values are whole numbers of seconds (1 to 31536000; boot_grace_secs may be 0).
+
+# Run in dry-run mode (log what would have been done, never reboot)
+# dry_run = false
+
+# Directory where detector executables are discovered
+# detectors_dir = "/etc/failsafe/detectors.d"
+
+# Directory where persistent reboot streak state is saved
+# state_dir = "/var/lib/failsafe"
+
+# [reboot]
+# Seconds after boot before any detector-triggered reboot is permitted
+# boot_grace_secs = 300
+# Base interval for exponential reboot backoff (doubles with each streak)
+# backoff_base_secs = 600
+# Maximum interval cap for exponential reboot backoff
+# backoff_max_secs = 86400
+# How long all detectors must stay healthy without interruption before streak resets to zero
+# (must be at least boot_grace_secs + backoff_base_secs)
+# stable_after_secs = 1800
+# Timeout before fallback forced reboot if graceful reboot hangs
+# reboot_deadline_secs = 120
+
+# [defaults]
+# Default interval between health checks for all detectors
+# interval_secs = 60
+# Default execution timeout for detector scripts
+# timeout_secs = 30
+# Default consecutive failures before triggering reboot actions
+# threshold = 3
+# Default escalation actions on failure (currently only "reboot")
+# actions = ["reboot"]
+
+# Example per-detector override (matches file name in detectors_dir):
+# [detector."example-detector"]
+# threshold = 5

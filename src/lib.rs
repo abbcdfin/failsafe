@@ -1,4 +1,5 @@
 pub mod action;
+pub mod config;
 pub mod detector;
 pub mod guard;
 #[macro_use]

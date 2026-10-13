@@ -1,16 +1,72 @@
+use std::fmt;
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::types::{Cause, Detector, Outcome, Policy};
+use crate::config::Config;
+use crate::types::{Cause, Detector, Outcome};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PermissionError {
+    NotOwnedByRoot(u32),
+    GroupOrWorldWritable(u32),
+}
+
+impl fmt::Display for PermissionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PermissionError::NotOwnedByRoot(uid) => {
+                write!(f, "must be owned by root (uid 0), but is owned by {uid}")
+            }
+            PermissionError::GroupOrWorldWritable(mode) => {
+                write!(f, "must not be writable by group or others (mode: {:04o})", mode & 0o7777)
+            }
+        }
+    }
+}
+
+pub fn check_permissions(euid: u32, file_uid: u32, file_mode: u32) -> Result<(), PermissionError> {
+    if euid != 0 {
+        return Ok(());
+    }
+    if file_uid != 0 {
+        return Err(PermissionError::NotOwnedByRoot(file_uid));
+    }
+    if (file_mode & 0o022) != 0 {
+        return Err(PermissionError::GroupOrWorldWritable(file_mode & 0o7777));
+    }
+    Ok(())
+}
 
 pub fn run(path: &Path, timeout: Duration) -> Outcome {
+    let euid = unsafe { libc::geteuid() };
+
+    if let Some(dir) = path.parent() {
+        match fs::metadata(dir) {
+            Ok(dir_meta) => {
+                if let Err(err) = check_permissions(euid, dir_meta.uid(), dir_meta.mode()) {
+                    return Outcome::Broken(format!("detectors directory {} {err}", dir.display()));
+                }
+            }
+            Err(e) => {
+                return Outcome::Broken(format!(
+                    "cannot stat detectors directory {}: {e}",
+                    dir.display()
+                ));
+            }
+        }
+    }
+
     let meta = match fs::metadata(path) {
         Ok(m) => m,
         Err(e) => return Outcome::Broken(format!("cannot resolve detector: {e}")),
     };
+    if let Err(err) = check_permissions(euid, meta.uid(), meta.mode()) {
+        return Outcome::Broken(format!("detector {} {err}", path.display()));
+    }
     if !meta.is_file() {
         return Outcome::Broken("detector is not a regular file".to_string());
     }
@@ -69,7 +125,7 @@ fn map_status(status: ExitStatus) -> Outcome {
     }
 }
 
-pub fn discover(dir: &Path, default_policy: &Policy) -> Result<Vec<Detector>, std::io::Error> {
+pub fn discover(dir: &Path, config: &Config) -> Result<Vec<Detector>, std::io::Error> {
     let mut entries = Vec::new();
     let read_dir = fs::read_dir(dir)?;
 
@@ -92,10 +148,13 @@ pub fn discover(dir: &Path, default_policy: &Policy) -> Result<Vec<Detector>, st
 
     let detectors = entries
         .into_iter()
-        .map(|(name, path)| Detector {
-            name,
-            path,
-            policy: default_policy.clone(),
+        .map(|(name, path)| {
+            let policy = config.policy_for(&name);
+            Detector {
+                name,
+                path,
+                policy,
+            }
         })
         .collect();
 
@@ -156,8 +215,8 @@ mod tests {
         symlink(tmp.join("does-not-exist"), &path_dangling).unwrap();
         fs::create_dir(&subdir).unwrap();
 
-        let policy = Policy::default();
-        let detectors = discover(&tmp, &policy).unwrap();
+        let config = Config::default();
+        let detectors = discover(&tmp, &config).unwrap();
 
         assert_eq!(detectors.len(), 4);
         assert_eq!(detectors[0].name, "a-det");
@@ -177,6 +236,47 @@ mod tests {
         }
 
         let _ = fs::remove_dir_all(tmp);
+    }
+
+    #[test]
+    fn test_check_permissions_non_root_always_allowed() {
+        assert_eq!(check_permissions(1000, 1000, 0o777), Ok(()));
+        assert_eq!(check_permissions(1000, 0, 0o666), Ok(()));
+    }
+
+    #[test]
+    fn test_check_permissions_root_valid() {
+        assert_eq!(check_permissions(0, 0, 0o755), Ok(()));
+        assert_eq!(check_permissions(0, 0, 0o644), Ok(()));
+        assert_eq!(check_permissions(0, 0, 0o700), Ok(()));
+    }
+
+    #[test]
+    fn test_check_permissions_root_wrong_owner() {
+        assert_eq!(
+            check_permissions(0, 1000, 0o755),
+            Err(PermissionError::NotOwnedByRoot(1000))
+        );
+    }
+
+    #[test]
+    fn test_check_permissions_root_writable_by_group_or_others() {
+        assert_eq!(
+            check_permissions(0, 0, 0o775),
+            Err(PermissionError::GroupOrWorldWritable(0o775))
+        );
+        assert_eq!(
+            check_permissions(0, 0, 0o777),
+            Err(PermissionError::GroupOrWorldWritable(0o777))
+        );
+        assert_eq!(
+            check_permissions(0, 0, 0o664),
+            Err(PermissionError::GroupOrWorldWritable(0o664))
+        );
+        assert_eq!(
+            check_permissions(0, 0, 0o646),
+            Err(PermissionError::GroupOrWorldWritable(0o646))
+        );
     }
 
     fn tempfile_dir(prefix: &str) -> std::path::PathBuf {
